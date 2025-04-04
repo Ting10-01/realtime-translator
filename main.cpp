@@ -30,11 +30,11 @@ void display_translated_text() {
 }
 
 int main(int argc, char *argv[]) {
-    // The thread that handles audio input and save it into the ring buffer
-    thread audio_thread(capture_audio);
-
     // The thread that controls the buffer data and sends it to the Whisper API
     thread buffer_thread(process_buffer);
+
+    // The thread that handles audio input and save it into the ring buffer
+    thread audio_thread(capture_audio);
 
     // The thread that recognizes speech using the Whisper API
     thread recognition_thread(recognize_speech);
@@ -44,6 +44,14 @@ int main(int argc, char *argv[]) {
     
     // The thread that diplays the translated text (C++)
     thread display_thread(display_translated_text);
+
+    // Wait for all threads to finish
+    // The join() function returns when the thread execution has completed.
+    audio_thread.join();
+    buffer_thread.join();
+    recognition_thread.join();
+    translator_thread.join();
+    display_thread.join();
 
     return 0;
 }

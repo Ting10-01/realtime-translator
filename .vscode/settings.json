@@ -1,5 +1,10 @@
 {
     "files.associations": {
-        "thread": "cpp"
+        "thread": "cpp",
+        "unistd.h": "c",
+        "pthread.h": "c",
+        "stdbool.h": "c",
+        "ring_buffer.h": "c",
+        "__stddef_size_t.h": "c"
     }
 }
