@@ -2,73 +2,86 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <string.h>
 #include <unistd.h>
 #include "ring_buffer.h"
 
-RingBuf* init_buf() {
-    RingBuf *rb = (RingBuf*)malloc(sizeof(RingBuf));
-    if (rb == NULL)
-        return NULL;
-    
-    rb->wptr = rb->buffer;
-    rb->rptr = rb->buffer;
+bool init_buf(RingBuf *rb, size_t buffer_size) {
+    // Check if the size is a power of 2 to use mask for wrap around
+    if (buffer_size < 1 || (buffer_size & (buffer_size - 1)) != 0) return false;
 
-    pthread_mutex_init(&rb->mutex, NULL);
+    rb->buffer_size = buffer_size;
 
-    return rb;
+    rb->index_mask = buffer_size - 1;
+    rb->data_count_mask = (buffer_size << 1) - 1;
+    rb->widx = 0;
+    rb->ridx = 0;
+    rb->buffer = (float*)malloc(buffer_size * sizeof(float));
+
+    return true;
 }
 
-void write_buf(RingBuf *rb, float *data, int size) {
-    pthread_mutex_lock(&rb->mutex);
+bool free_buf(RingBuf *rb) {
+    if (rb == NULL) return false;
+    free(rb->buffer);
+    free(rb);
+    
+    return true;
+}
 
-    // Wait until there is enough space in the buffer
-    while (size > space_in_buf(rb))
-        // Sleep for 1ms to avoid busy waiting
-        usleep(1000); 
+size_t space_in_buf(RingBuf *rb) {
+    return rb->buffer_size - data_in_buf(rb);
+}
 
-    for (int i = 0; i < size; i++) {
-        *rb->wptr = data[i];
-        rb->wptr++;
-        if (rb->wptr >= rb->buffer + BUFFER_SIZE)
-            rb->wptr = rb->buffer;
+size_t data_in_buf(RingBuf *rb) {
+    // rb->widx and rb->ridx are the index without wrap around
+    // difference between widx and ridx is the number of elements in the buffer
+    // & mask to ensure the difference is within the buffer size
+    return ((rb->widx - rb->ridx) & rb->data_count_mask);
+}
+
+size_t write_buf(RingBuf *rb, float *data, size_t data_size) {
+    size_t available_space = space_in_buf(rb);
+    if (available_space < data_size)
+        data_size = available_space;
+
+    rb_index idx = (rb->widx & rb->index_mask);
+    rb_index space_to_end = rb->buffer_size - idx;
+
+    if (space_to_end >= data_size)
+        memcpy(rb->buffer + idx, data, data_size * sizeof(float));
+    else {
+        // copy the first half of the data to the end of the buffer
+        memcpy(rb->buffer + idx, data, space_to_end * sizeof(float));
+        // copy the second half of the data to the beginning of the buffer
+        memcpy(rb->buffer, data + space_to_end, (data_size - space_to_end) * sizeof(float));
     }
 
-    pthread_mutex_unlock(&rb->mutex);
+    // update the write index after writing the data
+    __sync_synchronize();
+    rb->widx += data_size;
+
+    // return the number of data(float) written to the buffer
+    return data_size;
 }
 
-int read_buf(RingBuf *rb, float *data, int size) {
-    pthread_mutex_lock(&rb->mutex);
+size_t read_buf(RingBuf *rb, float *data, size_t data_size) {
+    size_t available_data = data_in_buf(rb);
+    if (available_data < data_size)
+        data_size = available_data;
 
-    int available_data = data_in_buf(rb);
-    if (available_data < size)
-        size = available_data;
+    rb_index idx = (rb->ridx & rb->index_mask);
+    rb_index data_to_end = rb->buffer_size - idx;
 
-    for (int i = 0; i < size; i++) {
-        data[i] = *rb->rptr;
-        rb->rptr++;
-        if (rb->rptr >= rb->buffer + BUFFER_SIZE)
-            rb->rptr = rb->buffer;
+    if (data_to_end >= data_size)
+        memcpy(data, rb->buffer + idx, data_size * sizeof(float));
+    else {
+        memcpy(data, rb->buffer + idx, data_to_end * sizeof(float));
+        memcpy(data + data_to_end, rb->buffer, (data_size - data_to_end) * sizeof(float));
     }
 
-    pthread_mutex_unlock(&rb->mutex);
+    __sync_synchronize();
+    rb->ridx += data_size;
 
-    return size;
-}
-
-int data_in_buf(RingBuf *rb) {
-    return BUFFER_SIZE - space_in_buf(rb) - 1;
-}
-
-// Though the buffer size is definded as X, the actual size is X-1 to differentiate the empty and full state
-int space_in_buf(RingBuf *rb) {
-    // the type of wptr and rptr are "float *", so the difference is the number of elements
-    // if the type of wptr and rptr are "size_t", the difference is the number of bytes so we need to divide it by sizeof(float)
-    if (rb->wptr > rb->rptr)
-        return BUFFER_SIZE - (rb->wptr - rb->rptr) - 1;
-    
-    if (rb->wptr < rb->rptr)
-        return rb->rptr - rb->wptr - 1;
-    
-    // The buffer is empty
-    return BUFFER_SIZE - 1;
+    return data_size;
 }

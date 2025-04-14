@@ -1,18 +1,11 @@
-#ifndef MAIN_HPP
+#pragma once
 
 #define MAIN_HPP
 
-extern "C" {
-    #include "ring_buffer.h"
-}
+#include "audio_recorder/audio_recorder.hpp"
 
 #define SHM_NAME "/AUDIO_BUFFER"
-#define MEMORY_SIZE (BUFFER_SIZE * sizeof(float))
+#define MEMORY_SIZE (RING_BUFFER_SIZE * 20)
 
-RingBuf* init_rb();
 std::pair<int, float*> init_shm();
-void capture_audio(RingBuf* rb);
-void write_shared_memory(RingBuf* rb, float* shm);
-void clean_up(RingBuf* rb, int* shm_fd, float* shm);
-
-#endif
+void clean_up(int* shm_fd, float* shm, float* data);

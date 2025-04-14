@@ -11,45 +11,54 @@
 using namespace std;
 
 int main(int argc, char* argv[]) {
-    RingBuf* rb = NULL;
     int shm_fd = -1;
     float* shm = NULL;
+
+    // Initialize the ring buffer and port audio
+    audio_recorder ar;
+    float* data = NULL;
     
-    try{
-        rb = init_rb();
+    try {
+        // Initialize the shared memory
         tie(shm_fd, shm) = init_shm();
+        // Initialize the data read from the ring buffer and write to the shared memory
+        //data = (float*)malloc(sizeof(float) * RING_BUFFER_SIZE);
+        // Start the audio recording
+        ar.start_recording();
     }
     catch (const runtime_error &e) {
-        cout << e.what() << endl;
+        std::cout << e.what() << endl;
+        clean_up(&shm_fd, shm, data);
         return -1;
     }
 
-    // The thread that handles audio input and save it into the ring buffer
-    // thread audio_reader(capture_audio, rb);
+    int time = 0; // temperary record time
+    int total = 0; // total number of frames read from the ring buffer
+    while (time < 10) {
+        // wait for the audio data to be available
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        size_t data_size = ar.read_audio_data(shm + total, RING_BUFFER_SIZE);
+        total += data_size;
+        cout << "Read " << data_size << " frames from the ring buffer" << endl; 
+        time ++; // simulate the recording time
+    }
 
-    // The thread that write the audio data from the ring buffer to shared memory
-    // thread buffer_writer(write_shared_memory, rb, shm);
+    ar.stop_recording();
 
-    capture_audio(rb);
-    write_shared_memory(rb, shm);
-    
-    // Wait for all threads to finish
-    // The join() function returns when the thread execution has completed.
-    // audio_reader.join();
-    // buffer_writer.join();
+    SF_INFO sfinfo;
+    sfinfo.samplerate = SAMPLE_RATE;
+    sfinfo.frames = 0;
+    sfinfo.channels = 1;
+    sfinfo.format = SF_FORMAT_WAV | SF_FORMAT_FLOAT;
+    SNDFILE *outfile = sf_open("record.wav", SFM_WRITE, &sfinfo);
+    sf_write_float(outfile, shm, total);
+    sf_close(outfile);
 
-    clean_up(rb, &shm_fd, shm);
+    clean_up(&shm_fd, shm, data);
     
     cout << "Finished!" << endl;
 
     return 0;
-}
-
-RingBuf* init_rb() {
-    RingBuf* rb = init_buf();
-    if (rb == NULL)
-        throw runtime_error("Failed to initialize ring buffer\n");
-    return rb;
 }
 
 pair<int, float*> init_shm() {
@@ -77,33 +86,11 @@ pair<int, float*> init_shm() {
     return {shm_fd, shm};
 }
 
-void capture_audio(RingBuf* rb) {
-    // Capture audio from the microphone and save it into a ring buffer
-    
-    // [TODO] Get the audio data from the microphone (use wav file for testing now)
-    SF_INFO sfinfo;
-    SNDFILE *infile = sf_open("./audio/wav/8842-302196-0000.wav", SFM_READ, &sfinfo);
-
-    float *buffer = (float *)malloc(sizeof(float) * sfinfo.frames * sfinfo.channels);
-    int read_count = sf_readf_float(infile, buffer, BUFFER_SIZE - 1);
-    sf_close(infile);
-    if (read_count <= 0) {
-        printf("Failed to read audio data\n");
-        return;
-    }
-
-    write_buf(rb, buffer, read_count);
-    
-    free(buffer);
-}
-
-void write_shared_memory(RingBuf* rb, float* shm) {
-    read_buf(rb, shm, BUFFER_SIZE);
-}
-
-void clean_up(RingBuf* rb, int* shm_fd, float* shm) {
-    free(rb);
-    munmap(shm, MEMORY_SIZE);
+void clean_up(int* shm_fd, float* shm, float* data) {
+    munmap(shm, MEMORY_SIZE * sizeof(float));
     shm_unlink(SHM_NAME);
     close(*shm_fd);
+
+    free(data);
+    data = NULL;
 }
